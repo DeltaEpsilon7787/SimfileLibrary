@@ -19,12 +19,12 @@ class PureRow(tuple):
 
     def replace_objects(self, from_note: NoteObject, to_note: NoteObject) -> 'PureRow':
         return PureRow(
-            obj.value is from_note and to_note or obj.value
+            obj is from_note and to_note or obj
             for obj in self
         )
 
     @property
-    def to_str_row(self):
+    def str_row(self):
         return ''.join(
             obj.value
             for obj in self
@@ -33,6 +33,13 @@ class PureRow(tuple):
     @property
     def is_empty(self):
         return {*self} == {NoteObject.EMPTY_LANE}
+
+    def find_object_lanes(self, needle_object: NoteObject):
+        return {
+            lane
+            for lane, obj in enumerate(self)
+            if obj is needle_object
+        }
 
 
 @attrs(frozen=True, slots=True, auto_attribs=True)

@@ -6,7 +6,7 @@ __all__ = ['BPM',
            'Measure', 'Beat',
            'LocalPosition', 'GlobalPosition',
            'NoteObject',
-           'Snap']
+           'Time', 'Snap']
 
 
 class BPM(Fraction):
