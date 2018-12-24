@@ -1,0 +1,76 @@
+%import common.INT
+%import common.NEWLINE
+%import common.SIGNED_NUMBER
+%import common.WORD
+%import common.WS
+
+%ignore NEWLINE
+%ignore WS
+
+NO_SEMICOLON_SENTENCE: /[^\;\n\r\t]+/i
+NO_COLON_SENTENCE: /[^:\n\r\t]+/i
+BEAT_SENTENCE: /[0-9\.=]+/
+OBJECT: "0" | "1" | "2" | "3" | "4" | "5" | "M" | "R" | "F" | "L"
+
+true: "YES"
+false: "NO"
+phrase: NO_SEMICOLON_SENTENCE
+no_colon_phrase: NO_COLON_SENTENCE
+unsafe_file: NO_SEMICOLON_SENTENCE
+safe_file: NO_SEMICOLON_SENTENCE
+float: SIGNED_NUMBER
+int: INT
+beat_bpm_pair: BEAT_SENTENCE ("," BEAT_SENTENCE)*
+beat_value_pair: BEAT_SENTENCE ("," BEAT_SENTENCE)*
+beat_beat_pair: BEAT_SENTENCE ("," BEAT_SENTENCE)*
+random_bpm: "*"
+
+simfile: (meta ";")+
+meta: 
+| "#TITLE:" [phrase] -> title
+| "#SUBTITLE:" [phrase] -> subtitle
+| "#ARTIST:" [phrase] -> artist
+| "#GENRE:" [phrase] -> genre
+| "#CREDIT:" [phrase] -> credit
+| "#BANNER:" [phrase] -> banner_path
+| "#BACKGROUND:" [phrase] -> bg_path
+| "#CDTITLE:" [phrase] -> cdtitle_path
+| "#MUSIC:" [phrase] -> music_path
+| "#OFFSET:" [float] -> offset
+| "#SAMPLESTART:" [float] -> sample_start
+| "#SAMPLELENGTH:" [float] -> sample_length
+| "#BPMS:" [beat_bpm_pair] -> bpms
+| ("#STOPS:" | "#FREEZES:") [beat_beat_pair] -> stops
+| "#ANIMATIONS:" [phrase] -> dontcare
+| "#ARTISTTRANSLIT:" [phrase] -> dontcare
+| "#ATTACKS:" [phrase] -> dontcare
+| "#BGCHANGES:" [phrase] -> dontcare
+| "#DISPLAYBPM:" [phrase] -> dontcare
+| "#FGCHANGES:" [phrase] -> dontcare
+| "#KEYSOUNDS:" [phrase] -> dontcare
+| "#LYRICSPATH:" [phrase] -> dontcare
+| "#SELECTABLE:" [phrase] -> dontcare
+| "#SUBTITLETRANSLIT:" [phrase] -> dontcare
+| "#TITLETRANSLIT:" [phrase] -> dontcare
+| "#DELAYS:" -> dontcare
+| "#TIMESIGNATURES:" [phrase] -> dontcare
+| "#NOTES:" ("dance-single" | "dance-couple") _chart_info measures4+ -> notes
+| "#NOTES:" "dance-solo" _chart_info measures6+ -> notes
+| "#NOTES:" "dance-double" _chart_info measures8+ -> notes
+_chart_info: ":" [step_artist] ":" [difficulty_name] ":" [difficulty_value] ":" [radar_values] ":"
+step_artist: no_colon_phrase
+difficulty_name: no_colon_phrase
+difficulty_value: int
+radar_values: (float [","])+ float -> dontcare
+
+measures4: (measure4 [","])+
+measure4: row4+
+row4: OBJECT~4
+
+measures6: (measure6 [","])+
+measure6: row6+
+row6: OBJECT~6
+
+measures8: (measure8 [","])+
+measure8: row8+
+row8: OBJECT~8
