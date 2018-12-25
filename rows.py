@@ -54,7 +54,7 @@ class LocalRow(object):
 
 
 @attrs(frozen=True, slots=True, auto_attribs=True)
-class GlobalRow(object):
+class GlobalRow(LocalRow):
     """A basic object representing a row within a chart."""
     row: PureRow
     pos: GlobalPosition
@@ -74,6 +74,14 @@ class GlobalTimedRow(GlobalRow):
     @classmethod
     def from_global_row(cls, global_row: GlobalRow, time: Time):
         return cls(global_row.row, global_row.pos, time)
+
+
+@attrs(frozen=True, slots=True, auto_attribs=True)
+class GlobalDeltaRow(GlobalTimedRow):
+    """A contextually dependent version of GlobalTimedRow, where `time` is the difference in time between this and next row"""
+    row: PureRow
+    pos: GlobalPosition
+    time: Time
 
 
 class Snap(int):

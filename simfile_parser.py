@@ -9,7 +9,7 @@ from attr import Factory, attrs
 from lark import Lark, Transformer
 
 from .basic_types import Measure, Time
-from .complex_types import MeasureBPMPair, MeasureMeasurePair, MeasureValuePair
+from .complex_types import MeasureBPMPair, MeasureMeasurePair, MeasureValuePair, Notefield
 from .rows import GlobalRow, GlobalTimedRow, LocalRow, PureRow
 
 __all__ = ['PureChart', 'AugmentedChart', 'Simfile', 'parse']
@@ -21,7 +21,7 @@ class PureChart(object):
     step_artist: Optional[str] = None
     diff_name: str = 'Beginner'
     diff_value: int = 1
-    note_field: List[GlobalRow] = Factory(list)
+    note_field: Notefield[GlobalRow] = Factory(list)
 
 
 @attrs(cmp=False, auto_attribs=True)
@@ -30,7 +30,7 @@ class AugmentedChart(PureChart):
     step_artist: Optional[str] = None
     diff_name: str = 'Beginner'
     diff_value: int = 1
-    note_field: List[GlobalTimedRow] = Factory(list)
+    note_field: Notefield[GlobalTimedRow] = Factory(list)
     bpm_segments: List[MeasureBPMPair] = Factory(list)
     stop_segments: List[MeasureMeasurePair] = Factory(list)
     offset: Time = 0
@@ -78,7 +78,6 @@ class AugmentedChart(PureChart):
             self.note_field.append(
                 GlobalTimedRow.from_global_row(last_object, elapsed_time - self.offset)
             )
-
 
 @attrs(cmp=False, auto_attribs=True)
 class Simfile(object):
