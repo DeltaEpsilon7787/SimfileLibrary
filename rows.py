@@ -1,14 +1,12 @@
-from typing import Union
+from typing import Container, Set, Union
 
 from attr import attrs
 
 from .basic_types import GlobalPosition, LocalPosition, Measure, NoteObject, Time
 
-__all__ = ['PureRow', 'LocalRow', 'GlobalRow', 'GlobalTimedRow', 'Snap']
-
 
 class PureRow(tuple):
-    """A basic pseudo-class representing a row, equivalent to tuples with additional methods."""
+    """A basic class representing a row, equivalent to tuples with additional methods."""
 
     @classmethod
     def from_str_row(cls, row: str) -> 'PureRow':
@@ -17,29 +15,36 @@ class PureRow(tuple):
             for char in row
         )
 
-    def replace_objects(self, from_note: NoteObject, to_note: NoteObject) -> 'PureRow':
+    def replace_objects(self, from_note: Union[NoteObject, Container[NoteObject]], to_note: NoteObject) -> 'PureRow':
+        try:
+            from_note = {*from_note}
+        except TypeError:
+            from_note = {from_note}
         return PureRow(
-            obj is from_note and to_note or obj
+            obj in from_note and to_note or obj
             for obj in self
         )
 
     @property
-    def str_row(self):
+    def str_row(self) -> str:
         return ''.join(
             obj.value
             for obj in self
         )
 
     @property
-    def is_empty(self):
+    def is_empty(self) -> bool:
         return {*self} == {NoteObject.EMPTY_LANE}
 
-    def find_object_lanes(self, needle_object: NoteObject):
+    def find_object_lanes(self, needle_object: NoteObject) -> Set[int]:
         return {
             lane
             for lane, obj in enumerate(self)
             if obj is needle_object
         }
+
+    def __repr__(self):
+        return self.str_row
 
 
 @attrs(frozen=True, slots=True, auto_attribs=True)
@@ -54,6 +59,12 @@ class LocalRow(object):
 
 
 @attrs(frozen=True, slots=True, auto_attribs=True)
+class TimedRow(object):
+    row: PureRow
+    time: Time
+
+
+@attrs(frozen=True, slots=True, auto_attribs=True)
 class GlobalRow(LocalRow):
     """A basic object representing a row within a chart."""
     row: PureRow
@@ -61,7 +72,8 @@ class GlobalRow(LocalRow):
 
     @classmethod
     def from_local_row(cls, local_row: LocalRow, global_pos: Measure):
-        return cls(local_row.row, global_pos + local_row.pos)
+        return cls(local_row.row,
+                   GlobalPosition(global_pos + local_row.pos))
 
 
 @attrs(frozen=True, slots=True, auto_attribs=True)
@@ -75,13 +87,29 @@ class GlobalTimedRow(GlobalRow):
     def from_global_row(cls, global_row: GlobalRow, time: Time):
         return cls(global_row.row, global_row.pos, time)
 
+    @property
+    def as_timed_row(self):
+        return TimedRow(self.row, self.time)
+
+
+TimedRows = Union[TimedRow, GlobalTimedRow]
+
 
 @attrs(frozen=True, slots=True, auto_attribs=True)
 class GlobalDeltaRow(GlobalTimedRow):
-    """A contextually dependent version of GlobalTimedRow, where `time` is the difference in time between this and next row"""
+    """A contextually dependent version of GlobalTimedRow,
+    where `time` is the difference in time between this and next row"""
     row: PureRow
     pos: GlobalPosition
     time: Time
+
+    @classmethod
+    def from_two_rows(cls, row_1: TimedRows, row_2: TimedRows):
+        return cls(
+            row_1.row,
+            row_1.pos,
+            Time(row_2.time - row_1.time)
+        )
 
 
 class Snap(int):

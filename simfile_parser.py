@@ -1,5 +1,4 @@
 from collections import deque
-from fractions import Fraction
 from operator import attrgetter
 from os import chdir, getcwd, path
 from re import sub
@@ -8,11 +7,10 @@ from typing import List, Optional, TextIO, Union
 from attr import Factory, attrs
 from lark import Lark, Transformer
 
-from .basic_types import Measure, Time
-from .complex_types import MeasureBPMPair, MeasureMeasurePair, MeasureValuePair, Notefield
+from .basic_types import CheaperFraction, LocalPosition, Measure, Time, ensure_simple_return_type
+from .chart_analysis import Notefield
+from .complex_types import MeasureBPMPair, MeasureMeasurePair, MeasureValuePair
 from .rows import GlobalRow, GlobalTimedRow, LocalRow, PureRow
-
-__all__ = ['PureChart', 'AugmentedChart', 'Simfile', 'parse']
 
 
 @attrs(cmp=False, auto_attribs=True)
@@ -23,6 +21,19 @@ class PureChart(object):
     diff_value: int = 1
     note_field: Notefield[GlobalRow] = Factory(list)
 
+    @classmethod
+    def from_tokens(cls, tokens):
+        if len(tokens) == 4:
+            return cls('',
+                       tokens[0].children[0],
+                       tokens[1].children[0],
+                       Notefield(tokens[3]))
+        if len(tokens) == 5:
+            return cls(tokens[0].children[0],
+                       tokens[1].children[0],
+                       tokens[2].children[0],
+                       Notefield(tokens[4]))
+
 
 @attrs(cmp=False, auto_attribs=True)
 class AugmentedChart(PureChart):
@@ -30,7 +41,7 @@ class AugmentedChart(PureChart):
     step_artist: Optional[str] = None
     diff_name: str = 'Beginner'
     diff_value: int = 1
-    note_field: Notefield[GlobalTimedRow] = Factory(list)
+    note_field: Notefield[GlobalTimedRow] = Factory(Notefield)
     bpm_segments: List[MeasureBPMPair] = Factory(list)
     stop_segments: List[MeasureMeasurePair] = Factory(list)
     offset: Time = 0
@@ -67,7 +78,7 @@ class AugmentedChart(PureChart):
 
             while True:
                 if next_stop and next_stop.measure < last_measure + delta_measure:
-                    delta_time += Fraction(next_stop.value, last_bpm.bpm.measures_per_second)
+                    delta_time += CheaperFraction(next_stop.value, last_bpm.bpm.measures_per_second)
                     next_stop = stop_segments.popleft() if stop_segments else None
                 else:
                     break
@@ -76,8 +87,9 @@ class AugmentedChart(PureChart):
             last_measure += delta_measure
 
             self.note_field.append(
-                GlobalTimedRow.from_global_row(last_object, elapsed_time - self.offset)
+                GlobalTimedRow.from_global_row(last_object, Time(elapsed_time - self.offset))
             )
+
 
 @attrs(cmp=False, auto_attribs=True)
 class Simfile(object):
@@ -119,17 +131,13 @@ class ChartTransformer(Transformer):
     file_handles = set()
 
     @staticmethod
-    def _extract_first(tree):
-        return tree.children[0]
-
-    @staticmethod
     def row(tokens) -> PureRow:
         return PureRow.from_str_row(''.join(tokens))
 
     @staticmethod
     def measure(tokens) -> List[LocalRow]:
         return [
-            LocalRow(token, Fraction(pos, len(tokens)))
+            LocalRow(token, LocalPosition(pos, len(tokens)))
             for pos, token in enumerate(tokens)
         ]
 
@@ -143,10 +151,7 @@ class ChartTransformer(Transformer):
 
     @staticmethod
     def notes(tokens) -> PureChart:
-        try:
-            return PureChart(*map(ChartTransformer._extract_first, tokens[:3]), tokens[4])
-        except IndexError:
-            return PureChart('', *map(ChartTransformer._extract_first, tokens[:2]), tokens[3])
+        return PureChart.from_tokens(tokens)
 
     @staticmethod
     def simfile(tokens) -> Simfile:
@@ -185,28 +190,23 @@ class ChartTransformer(Transformer):
         return True
 
     @staticmethod
+    @ensure_simple_return_type
     def phrase(tokens) -> str:
-        return str(tokens[0])
+        return tokens[0]
 
     @staticmethod
-    def float(tokens) -> Fraction:
-        return Fraction(tokens[0])
+    @ensure_simple_return_type
+    def float(tokens) -> CheaperFraction:
+        return tokens[0]
 
     @staticmethod
+    @ensure_simple_return_type
     def int(tokens) -> int:
-        return int(tokens[0])
+        return tokens[0]
 
-    @staticmethod
-    def beat_value_pair(tokens) -> MeasureValuePair:
-        return MeasureValuePair.from_string_list(tokens)
-
-    @staticmethod
-    def beat_beat_pair(tokens) -> MeasureMeasurePair:
-        return MeasureMeasurePair.from_string_list(tokens)
-
-    @staticmethod
-    def beat_bpm_pair(tokens) -> MeasureBPMPair:
-        return MeasureBPMPair.from_string_list(tokens)
+    beat_value_pair = staticmethod(MeasureValuePair.from_string_list)
+    beat_beat_pair = staticmethod(MeasureMeasurePair.from_string_list)
+    beat_bpm_pair = staticmethod(MeasureBPMPair.from_string_list)
 
     row4 = row6 = row8 = row
     measure4 = measure6 = measure8 = measure

@@ -1,34 +1,62 @@
 from enum import Enum, unique
 from fractions import Fraction
+from functools import wraps
 from typing import Union
 
-__all__ = ['BPM',
-           'Measure', 'Beat',
-           'LocalPosition', 'GlobalPosition',
-           'NoteObject',
-           'Time', 'Snap']
+
+def ensure_simple_return_type(func):
+    """A function decorator that uses the type annotation of the return value to convert to this type.
+
+    @ensure_simple_return_type
+    def test(alpha) -> int:
+        return alpha + 1.5
+
+    alpha(1) == int(2.5)"""
+
+    @wraps(func)
+    def inner(*args, **kwargs):
+        return func.__annotations__['return'](func(*args, **kwargs))
+
+    return inner
 
 
-class BPM(Fraction):
+class CheaperFraction(Fraction):
+    """A version of Fraction that has a faster hash function and renewal."""
+
+    def __new__(cls, numerator=0, denominator=None, *, _normalize=True):
+        if numerator.__class__ == cls:
+            return numerator
+
+        return super().__new__(cls, numerator=numerator, denominator=denominator, _normalize=True)
+
+    def __hash__(self):
+        return ((self._numerator + self._denominator) *
+                (self._numerator + self._denominator + 1) +
+                self._denominator) // 2
+
+
+class BPM(CheaperFraction):
     """Beats-per-Minute, a unit of frequency used to define the rate of row advancement"""
 
     @property
-    def measures_per_second(self):
+    @ensure_simple_return_type
+    def measures_per_second(self) -> CheaperFraction:
         return Fraction(240, self)
 
     @property
-    def rows_per_second(self):
+    @ensure_simple_return_type
+    def rows_per_second(self) -> CheaperFraction:
         return self.measures_per_second * 192
 
 
-class Measure(Fraction):
+class Measure(CheaperFraction):
     """A positional continuous unit of time in charts, it composes a chart.
 
     Equivalent to Fraction."""
     pass
 
 
-class Beat(Fraction):
+class Beat(CheaperFraction):
     """A positional continuous unit of time in charts, and is a part of a measure.
 
     Equivalent to Fraction.
@@ -36,11 +64,13 @@ class Beat(Fraction):
     As time signature changes are not used and don't work in SM in general,
     Beat and Measure are equivalent and it's recommended to stick to Measure for positioning."""
 
+    @property
+    @ensure_simple_return_type
     def as_measure(self) -> Measure:
-        return Measure(self * Fraction(1, 4))
+        return self * Fraction(1, 4)
 
 
-class LocalPosition(Fraction):
+class LocalPosition(CheaperFraction):
     """A discrete position within a measure.
 
     Equivalent to Fraction.
@@ -51,7 +81,7 @@ class LocalPosition(Fraction):
     pass
 
 
-class GlobalPosition(Fraction):
+class GlobalPosition(CheaperFraction):
     """A discrete position within a chart, in measures.
 
     Equivalent to Fraction.
@@ -61,13 +91,23 @@ class GlobalPosition(Fraction):
     1 <= GlobalPosition.denominator <= 192"""
 
     @property
-    def measure(self):
+    @ensure_simple_return_type
+    def measure(self) -> int:
         return int(self.real)
 
+    @property
+    @ensure_simple_return_type
+    def is_null(self) -> bool:
+        return self < 0
 
-class Time(Fraction):
+
+class Time(CheaperFraction):
     """A continuous unit of real time, in seconds."""
-    pass
+
+    @property
+    def limited_precision(self) -> 'Time':
+        """Time, but the precision is up-to 0.001."""
+        return Time(round(self, 3))
 
 
 @unique
@@ -111,3 +151,6 @@ class Snap(Enum):
             cls._value2member_map_[6] = cls.VIOLET
 
         return cls._lookup.get(position.denominator, cls.GRAY)
+
+
+NullGlobalPosition = GlobalPosition(-1)
