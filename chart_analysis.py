@@ -30,20 +30,6 @@ class _SequentialAnalysisAbstract(List[T]):
     def occurrence_counter(self) -> Counter[T]:
         return collections.Counter(self)
 
-    @property
-    def uniformity_map(self) -> Dict[T, float]:
-        middle = len(self) / 2
-        keys = self.unique_elements
-
-        result = {}
-        for key in keys:
-            prob = self.count(key) / len(self)
-            dev = sum((index - middle) ** 2 for index, row in enumerate(self) if row == key)
-
-            result[key] = prob * dev
-
-        return result
-
 
 class NRowWindow(_SequentialAnalysisAbstract[Tuple[T, ...]]):
     def __init__(self, *args, **kwargs):
@@ -127,6 +113,25 @@ class Notefield(_SequentialAnalysisAbstract[T]):
             evolve(row, time=row.time.limited_precision)
             for row in self
         )
+
+    @property
+    def uniformity_map(self) -> Dict[T, float]:
+        keys = self.unique_pure_rows
+        result = {}
+        for key in keys:
+            timings = [row.time for row in self if row.row == key]
+            timings.sort()
+            deltas = zip(timings[:-1], timings[1:])
+            deltas = [beta - alpha for alpha, beta in deltas]
+            if len(deltas) <= 6:
+                continue
+            mean_delta = sum(deltas) / len(deltas)
+
+            variance = sum((time - mean_delta) ** 2 for time in timings)
+            std = (variance / (len(timings) - 1)) ** 0.5
+            result[key] = (mean_delta, std)
+
+        return result
 
     @property
     def hold_roll_bodies_distinct(self) -> 'Notefield[T]':

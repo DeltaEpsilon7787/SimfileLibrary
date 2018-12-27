@@ -19,11 +19,12 @@ no_colon_phrase: NO_COLON_SENTENCE
 unsafe_file: NO_SEMICOLON_SENTENCE
 safe_file: NO_SEMICOLON_SENTENCE
 float: SIGNED_NUMBER
+time: float
 int: INT
 beat_bpm_pair: BEAT_SENTENCE ("," BEAT_SENTENCE)*
 beat_value_pair: BEAT_SENTENCE ("," BEAT_SENTENCE)*
 beat_beat_pair: BEAT_SENTENCE ("," BEAT_SENTENCE)*
-random_bpm: "*"
+display_bpm_string: phrase
 
 simfile: (meta ";")+
 meta: 
@@ -36,24 +37,24 @@ meta:
 | "#BACKGROUND:" [phrase] -> bg_path
 | "#CDTITLE:" [phrase] -> cdtitle_path
 | "#MUSIC:" [phrase] -> music_path
-| "#OFFSET:" [float] -> offset
-| "#SAMPLESTART:" [float] -> sample_start
-| "#SAMPLELENGTH:" [float] -> sample_length
+| "#OFFSET:" [time] -> offset
+| "#SAMPLESTART:" [time] -> sample_start
+| "#SAMPLELENGTH:" [time] -> sample_length
 | "#BPMS:" [beat_bpm_pair] -> bpms
 | ("#STOPS:" | "#FREEZES:") [beat_beat_pair] -> stops
-| "#ANIMATIONS:" [phrase] -> dontcare
-| "#ARTISTTRANSLIT:" [phrase] -> dontcare
-| "#ATTACKS:" [phrase] -> dontcare
-| "#BGCHANGES:" [phrase] -> dontcare
-| "#DISPLAYBPM:" [phrase] -> dontcare
-| "#FGCHANGES:" [phrase] -> dontcare
-| "#KEYSOUNDS:" [phrase] -> dontcare
-| "#LYRICSPATH:" [phrase] -> dontcare
-| "#SELECTABLE:" [phrase] -> dontcare
-| "#SUBTITLETRANSLIT:" [phrase] -> dontcare
-| "#TITLETRANSLIT:" [phrase] -> dontcare
-| "#DELAYS:" -> dontcare
-| "#TIMESIGNATURES:" [phrase] -> dontcare
+| "#ANIMATIONS:" [phrase] -> meta_animations
+| "#ARTISTTRANSLIT:" [phrase] -> meta_artisttranslit
+| "#ATTACKS:" [phrase] -> meta_attacks
+| "#BGCHANGES:" [phrase] -> meta_bgchanges
+| "#DISPLAYBPM:" [display_bpm_string] -> display_bpm
+| "#FGCHANGES:" [phrase] -> meta_fgchanges
+| "#KEYSOUNDS:" [phrase] -> meta_keysounds
+| "#LYRICSPATH:" [phrase] -> meta_lyricspath
+| "#SELECTABLE:" [phrase] -> meta_selectable
+| "#SUBTITLETRANSLIT:" [phrase] -> meta_subtitletranslit
+| "#TITLETRANSLIT:" [phrase] -> meta_titletranslit
+| "#DELAYS:" -> meta_delays
+| "#TIMESIGNATURES:" [phrase] -> meta_timesignatures
 | "#NOTES:" ("dance-single" | "dance-couple") _chart_info measures4+ -> notes
 | "#NOTES:" "dance-solo" _chart_info measures6+ -> notes
 | "#NOTES:" "dance-double" _chart_info measures8+ -> notes

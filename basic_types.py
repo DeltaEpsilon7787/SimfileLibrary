@@ -1,7 +1,7 @@
 from enum import Enum, unique
 from fractions import Fraction
 from functools import wraps
-from typing import Union
+from typing import Union, get_type_hints
 
 
 def ensure_simple_return_type(func):
@@ -15,7 +15,7 @@ def ensure_simple_return_type(func):
 
     @wraps(func)
     def inner(*args, **kwargs):
-        return func.__annotations__['return'](func(*args, **kwargs))
+        return get_type_hints(func)['return'](func(*args, **kwargs))
 
     return inner
 
@@ -27,7 +27,7 @@ class CheaperFraction(Fraction):
         if numerator.__class__ == cls:
             return numerator
 
-        return super().__new__(cls, numerator=numerator, denominator=denominator, _normalize=True)
+        return super().__new__(cls, numerator=numerator, denominator=denominator, _normalize=_normalize)
 
     def __hash__(self):
         return ((self._numerator + self._denominator) *

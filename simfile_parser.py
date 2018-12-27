@@ -1,13 +1,14 @@
 from collections import deque
 from operator import attrgetter
 from os import chdir, getcwd, path
+from os.path import join
 from re import sub
-from typing import List, Optional, TextIO, Union
+from typing import List, Optional, TextIO, Union, Dict, Callable, Tuple
 
 from attr import Factory, attrs
 from lark import Lark, Transformer
 
-from .basic_types import CheaperFraction, LocalPosition, Measure, Time, ensure_simple_return_type
+from .basic_types import CheaperFraction, LocalPosition, Measure, Time, ensure_simple_return_type, BPM
 from .chart_analysis import Notefield
 from .complex_types import MeasureBPMPair, MeasureMeasurePair, MeasureValuePair
 from .rows import GlobalRow, GlobalTimedRow, LocalRow, PureRow
@@ -104,27 +105,30 @@ class Simfile(object):
     cdtitle_path: Optional[str] = None
     sample_start: Time = 0
     sample_length: Time = 10
-    display_bpm: str = '*'
+    display_bpm: Union[str, Tuple[BPM, BPM]] = None
     bpm_segments: List[MeasureBPMPair] = Factory(list)
     stop_segments: List[MeasureMeasurePair] = Factory(list)
     offset: Time = 0
+    meta: Dict[str, str] = Factory(dict)
     charts: List[AugmentedChart] = Factory(list)
+
+    _file_context: str = None
 
     @property
     def music_file(self):
-        return self.music_path and open(self.music_path, 'r')
+        return self.music_path and open(join(self._file_context, self.music_path), 'rb')
 
     @property
     def banner_file(self):
-        return self.banner_path and open(self.banner_path, 'r')
+        return self.banner_path and open(join(self._file_context, self.banner_path), 'rb')
 
     @property
     def bg_file(self):
-        return self.bg_path and open(self.bg_path, 'r')
+        return self.bg_path and open(join(self._file_context, self.bg_path), 'rb')
 
     @property
     def cdtitle_file(self):
-        return self.cdtitle_path and open(self.cdtitle_path, 'r')
+        return self.cdtitle_path and open(join(self._file_context, self.cdtitle_path), 'rb')
 
 
 class ChartTransformer(Transformer):
@@ -157,6 +161,7 @@ class ChartTransformer(Transformer):
     def simfile(tokens) -> Simfile:
         result = Simfile()
 
+        result._file_context = getcwd()
         for token in tokens:
             if not token:
                 continue
@@ -166,6 +171,8 @@ class ChartTransformer(Transformer):
                                            stop_segments=result.stop_segments,
                                            offset=Time(result.offset))
                 result.charts.append(new_chart)
+            elif isinstance(token, tuple):
+                result.meta[token[0]] = token[1]
             elif not token.children:
                 continue
             elif token.data == 'bpms':
@@ -175,7 +182,25 @@ class ChartTransformer(Transformer):
             else:
                 setattr(result, token.data, token.children[0])
 
+        if result.display_bpm is None:
+            min_bpm = min(bpm_segment.bpm for bpm_segment in result.bpm_segments)
+            max_bpm = max(bpm_segment.bpm for bpm_segment in result.bpm_segments)
+
+            result.display_bpm = (min_bpm, max_bpm)
+
         return result
+
+    @staticmethod
+    def real_meta_creator(token_context) -> Callable[[List[str]], Tuple[str, str]]:
+        def meta(tokens):
+            return (token_context, tokens and tokens[0] or '')
+
+        return meta
+
+    def __getattribute__(self, item):
+        if item.startswith('meta_'):
+            return self.real_meta_creator(item[5:].upper())
+        return super().__getattribute__(item)
 
     @staticmethod
     def dontcare(__) -> None:
@@ -190,6 +215,19 @@ class ChartTransformer(Transformer):
         return True
 
     @staticmethod
+    def display_bpm_string(tokens) -> Union[str, Tuple[BPM, BPM]]:
+        value = tokens[0]
+        if value == '*':
+            return value
+
+        try:
+            return BPM(value), BPM(value)
+        except ValueError:
+            from_, to = value.split(':')
+            pair = BPM(from_), BPM(to)
+            return min(pair), max(pair)
+
+    @staticmethod
     @ensure_simple_return_type
     def phrase(tokens) -> str:
         return tokens[0]
@@ -202,6 +240,11 @@ class ChartTransformer(Transformer):
     @staticmethod
     @ensure_simple_return_type
     def int(tokens) -> int:
+        return tokens[0]
+
+    @staticmethod
+    @ensure_simple_return_type
+    def time(tokens) -> Time:
         return tokens[0]
 
     beat_value_pair = staticmethod(MeasureValuePair.from_string_list)
