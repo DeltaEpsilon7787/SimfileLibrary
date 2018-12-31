@@ -1,17 +1,15 @@
-from collections import deque
-from operator import attrgetter
 from os import chdir, getcwd, path
 from os.path import join
 from re import sub
-from typing import List, Optional, TextIO, Union, Dict, Callable, Tuple
+from typing import Dict, List, Optional, TextIO, Tuple, Union
 
 from attr import Factory, attrs
 from lark import Lark, Transformer
 
-from .basic_types import CheaperFraction, LocalPosition, Measure, Time, ensure_simple_return_type, BPM
-from .chart_analysis import Notefield
+from .basic_types import BPM, CheaperFraction, LocalPosition, Measure, Time
+from .chart_analysis import TimedNotefield, UntimedNotefield
 from .complex_types import MeasureBPMPair, MeasureMeasurePair, MeasureValuePair
-from .rows import GlobalRow, GlobalTimedRow, LocalRow, PureRow
+from .rows import GlobalRow, LocalRow, PureRow
 
 
 @attrs(cmp=False, auto_attribs=True)
@@ -20,7 +18,7 @@ class PureChart(object):
     step_artist: Optional[str] = None
     diff_name: str = 'Beginner'
     diff_value: int = 1
-    note_field: Notefield[GlobalRow] = Factory(list)
+    note_field: UntimedNotefield = Factory(UntimedNotefield)
 
     @classmethod
     def from_tokens(cls, tokens):
@@ -28,12 +26,25 @@ class PureChart(object):
             return cls('',
                        tokens[0].children[0],
                        tokens[1].children[0],
-                       Notefield(tokens[3]))
+                       UntimedNotefield(tokens[3]))
         if len(tokens) == 5:
             return cls(tokens[0].children[0],
                        tokens[1].children[0],
                        tokens[2].children[0],
-                       Notefield(tokens[4]))
+                       UntimedNotefield(tokens[4]))
+
+    def evolve(self, context: 'Simfile') -> 'AugmentedChart':
+        return AugmentedChart(
+            self.step_artist,
+            self.diff_name,
+            self.diff_value,
+            self.note_field.calculate_timings(context.bpm_segments,
+                                              context.stop_segments,
+                                              context.offset),
+            context.bpm_segments,
+            context.stop_segments,
+            context.offset
+        )
 
 
 @attrs(cmp=False, auto_attribs=True)
@@ -42,54 +53,10 @@ class AugmentedChart(PureChart):
     step_artist: Optional[str] = None
     diff_name: str = 'Beginner'
     diff_value: int = 1
-    note_field: Notefield[GlobalTimedRow] = Factory(Notefield)
+    note_field: TimedNotefield = Factory(TimedNotefield)
     bpm_segments: List[MeasureBPMPair] = Factory(list)
     stop_segments: List[MeasureMeasurePair] = Factory(list)
     offset: Time = 0
-
-    def __attrs_post_init__(self):
-        bpm_segments = deque(sorted(self.bpm_segments, key=attrgetter('measure')))
-        stop_segments = deque(sorted(self.stop_segments, key=attrgetter('measure')))
-        note_field_deque = deque(sorted(self.note_field, key=attrgetter('pos')))
-
-        elapsed_time = 0
-        last_measure = 0
-        last_bpm = bpm_segments.popleft()
-        next_stop = stop_segments.popleft() if stop_segments else None
-
-        self.note_field.clear()
-        while note_field_deque:
-            last_object = note_field_deque.popleft()
-            delta_measure = last_object.pos - last_measure
-
-            delta_time = 0
-            while True:
-                next_bpm = bpm_segments[0] if bpm_segments else None
-
-                if next_bpm and next_bpm.measure < last_object.pos:
-                    delta_timing = next_bpm.measure - last_measure
-                    delta_time += last_bpm.bpm.measures_per_second * delta_timing
-                    delta_measure -= delta_timing
-                    last_bpm = bpm_segments.popleft()
-                    last_measure = last_bpm.measure
-                else:
-                    break
-
-            delta_time += last_bpm.bpm.measures_per_second * delta_measure
-
-            while True:
-                if next_stop and next_stop.measure < last_measure + delta_measure:
-                    delta_time += CheaperFraction(next_stop.value, last_bpm.bpm.measures_per_second)
-                    next_stop = stop_segments.popleft() if stop_segments else None
-                else:
-                    break
-
-            elapsed_time += delta_time
-            last_measure += delta_measure
-
-            self.note_field.append(
-                GlobalTimedRow.from_global_row(last_object, Time(elapsed_time - self.offset))
-            )
 
 
 @attrs(cmp=False, auto_attribs=True)
@@ -139,22 +106,22 @@ class ChartTransformer(Transformer):
         return PureRow.from_str_row(''.join(tokens))
 
     @staticmethod
-    def measure(tokens) -> List[LocalRow]:
+    def measure(tokens: List[PureRow]) -> List[LocalRow]:
         return [
-            LocalRow(token, LocalPosition(pos, len(tokens)))
+            token.evolve(LocalPosition(pos, len(tokens)))
             for pos, token in enumerate(tokens)
         ]
 
     @staticmethod
-    def measures(tokens) -> List[GlobalRow]:
+    def measures(tokens: List[List[LocalRow]]) -> List[GlobalRow]:
         return [
-            GlobalRow.from_local_row(local_row, Measure(global_pos))
+            local_row.evolve(Measure(global_pos))
             for global_pos, measure in enumerate(tokens)
             for local_row in measure
         ]
 
     @staticmethod
-    def notes(tokens) -> PureChart:
+    def notes(tokens: List[GlobalRow]) -> PureChart:
         return PureChart.from_tokens(tokens)
 
     @staticmethod
@@ -166,11 +133,7 @@ class ChartTransformer(Transformer):
             if not token:
                 continue
             elif isinstance(token, PureChart):
-                new_chart = AugmentedChart(**token.__dict__,
-                                           bpm_segments=result.bpm_segments,
-                                           stop_segments=result.stop_segments,
-                                           offset=Time(result.offset))
-                result.charts.append(new_chart)
+                result.charts.append(token.evolve(result))
             elif isinstance(token, tuple):
                 result.meta[token[0]] = token[1]
             elif not token.children:
@@ -190,16 +153,12 @@ class ChartTransformer(Transformer):
 
         return result
 
-    @staticmethod
-    def real_meta_creator(token_context) -> Callable[[List[str]], Tuple[str, str]]:
-        def meta(tokens):
-            return (token_context, tokens and tokens[0] or '')
-
-        return meta
-
     def __getattribute__(self, item):
         if item.startswith('meta_'):
-            return self.real_meta_creator(item[5:].upper())
+            def meta(tokens):
+                return item[5:].upper(), tokens and tokens[0] or ''
+
+            return meta
         return super().__getattribute__(item)
 
     @staticmethod
@@ -228,24 +187,20 @@ class ChartTransformer(Transformer):
             return min(pair), max(pair)
 
     @staticmethod
-    @ensure_simple_return_type
     def phrase(tokens) -> str:
-        return tokens[0]
+        return str(tokens[0])
 
     @staticmethod
-    @ensure_simple_return_type
     def float(tokens) -> CheaperFraction:
-        return tokens[0]
+        return CheaperFraction(tokens[0])
 
     @staticmethod
-    @ensure_simple_return_type
     def int(tokens) -> int:
-        return tokens[0]
+        return int(tokens[0])
 
     @staticmethod
-    @ensure_simple_return_type
     def time(tokens) -> Time:
-        return tokens[0]
+        return Time(tokens[0])
 
     beat_value_pair = staticmethod(MeasureValuePair.from_string_list)
     beat_beat_pair = staticmethod(MeasureMeasurePair.from_string_list)

@@ -29,24 +29,24 @@ class CheaperFraction(Fraction):
 
         return super().__new__(cls, numerator=numerator, denominator=denominator, _normalize=_normalize)
 
-    def __hash__(self):
-        return ((self._numerator + self._denominator) *
-                (self._numerator + self._denominator + 1) +
-                self._denominator) // 2
+    def __hash__(self) -> int:
+        n = 2 * self._numerator
+        if n < 0:
+            n = -n + 1
+        d = self.denominator
+        return ((n + d) * (n + d + 1) + d) // 2
 
 
 class BPM(CheaperFraction):
     """Beats-per-Minute, a unit of frequency used to define the rate of row advancement"""
 
     @property
-    @ensure_simple_return_type
     def measures_per_second(self) -> CheaperFraction:
-        return Fraction(240, self)
+        return CheaperFraction(Fraction(240, self))
 
     @property
-    @ensure_simple_return_type
     def rows_per_second(self) -> CheaperFraction:
-        return self.measures_per_second * 192
+        return CheaperFraction(self.measures_per_second * 192)
 
 
 class Measure(CheaperFraction):
@@ -65,9 +65,8 @@ class Beat(CheaperFraction):
     Beat and Measure are equivalent and it's recommended to stick to Measure for positioning."""
 
     @property
-    @ensure_simple_return_type
     def as_measure(self) -> Measure:
-        return self * Fraction(1, 4)
+        return Measure(self * Fraction(1, 4))
 
 
 class LocalPosition(CheaperFraction):
@@ -91,12 +90,10 @@ class GlobalPosition(CheaperFraction):
     1 <= GlobalPosition.denominator <= 192"""
 
     @property
-    @ensure_simple_return_type
     def measure(self) -> int:
         return int(self.real)
 
     @property
-    @ensure_simple_return_type
     def is_null(self) -> bool:
         return self < 0
 
@@ -112,16 +109,19 @@ class Time(CheaperFraction):
 
 @unique
 class NoteObject(Enum):
-    """A possible SM object within a chart, the value being what character is used in SM files for this object."""
+    """A possible SM object within a chart, the value being what character is used in SM files for this object,
+    except ROLL_END"""
     EMPTY_LANE = '0'
     TAP_OBJECT = '1'
     HOLD_START = '2'
-    HOLD_END = '3'
+    HOLD_ROLL_END = '3'
     ROLL_START = '4'
-    ROLL_END = '5'
     MINE = 'M'
     FAKE = 'F'
     LIFT = 'L'
+
+    HOLD_BODY = 0
+    ROLL_BODY = 1
 
     @classmethod
     def get_from_character(cls, character: str) -> 'NoteObject':
