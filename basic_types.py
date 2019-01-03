@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from enum import Enum, unique
 from fractions import Fraction
 from functools import wraps
@@ -35,6 +36,25 @@ class CheaperFraction(Fraction):
             n = -n + 1
         d = self.denominator
         return ((n + d) * (n + d + 1) + d) // 2
+
+
+class Invariant(CheaperFraction):
+    def __new__(cls, *args, **kwargs):
+        result = super().__new__(cls, *args, **kwargs)
+        result.__class__.__new__ = None
+
+        return result
+
+    def _identity(self, *_, **__):
+        return self
+
+    def hash(self):
+        return hash(self.__class__.__name__)
+
+    __add__, __radd__ = _identity, _identity
+    __sub__, __rsub__ = _identity, _identity
+    __mul__, __rmul__ = _identity, _identity
+    __truediv__, __rtruediv__ = _identity, _identity
 
 
 class BPM(CheaperFraction):
@@ -94,6 +114,10 @@ class GlobalPosition(CheaperFraction):
         return int(self.real)
 
     @property
+    def local_position(self) -> LocalPosition:
+        return LocalPosition(self - self.measure)
+
+    @property
     def is_null(self) -> bool:
         return self < 0
 
@@ -105,6 +129,27 @@ class Time(CheaperFraction):
     def limited_precision(self) -> 'Time':
         """Time, but the precision is up-to 0.001."""
         return Time(round(self, 3))
+
+
+class PositionInvariant(GlobalPosition, Invariant):
+    pass
+
+
+PositionInvariant = PositionInvariant()
+
+
+class TimeInvariant(Time, Invariant):
+    pass
+
+
+TimeInvariant = TimeInvariant()
+
+
+class DeltaInvariant(Time, Invariant):
+    pass
+
+
+DeltaInvariant = DeltaInvariant()
 
 
 @unique
@@ -120,8 +165,8 @@ class NoteObject(Enum):
     FAKE = 'F'
     LIFT = 'L'
 
-    HOLD_BODY = 0
-    ROLL_BODY = 1
+    HOLD_BODY = 'H'
+    ROLL_BODY = 'R'
 
     @classmethod
     def get_from_character(cls, character: str) -> 'NoteObject':
@@ -154,3 +199,7 @@ class Snap(Enum):
 
 
 NullGlobalPosition = GlobalPosition(-1)
+
+
+def make_ordered_set(iterable):
+    return tuple(OrderedDict((anything, None) for anything in iterable).keys())

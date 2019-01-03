@@ -1,13 +1,15 @@
 import collections
+from functools import lru_cache
+from itertools import groupby, permutations
 from operator import attrgetter
-from typing import Counter, Dict, FrozenSet, Generic, List, Tuple, TypeVar, Union, cast
+from typing import Counter, FrozenSet, Generic, List, Tuple, TypeVar, Union, cast
 
 from attr import attrs, evolve
 
-from .basic_types import CheaperFraction, Measure, NoteObject, Time
+from .basic_types import Beat, CheaperFraction, NoteObject, Time, make_ordered_set
 from .complex_types import MeasureBPMPair, MeasureMeasurePair
-from .rows import GlobalDeltaRow, GlobalRow, GlobalTimedRow, HasPosition, HasRow, HasTime, JUDGE_IMPORTANT_SET, PureRow, \
-    RowFlags
+from .rows import DECORATIVE_SET, GlobalDeltaRow, GlobalRow, GlobalTimedRow, HasPosition, HasRow, HasTime, \
+    LONG_NOTE_SET, PureRow, RowFlags
 
 # PureNotefield - PureRow --> HasRow
 # UntimedNotefield - GlobalRow --> HasRow, HasPosition
@@ -25,9 +27,6 @@ class MetaRow(Generic[T]):
     """Final evolutionary stage of rows, with attached metadata."""
     _row: T
     _kind: RowFlags
-    _previous_rows: 'List[T]' = None
-
-    _timing_window_context: Time = None
 
     @property
     def row(self) -> T:
@@ -37,81 +36,22 @@ class MetaRow(Generic[T]):
     def kind(self) -> 'RowFlags':
         return self._kind
 
-    @property
-    def previous_rows(self):
-        if self._previous_rows is None:
-            raise ValueError
-        return self._previous_rows
-
-    @property
-    def timing_window(self) -> 'Time':
-        if self._timing_window_context is None:
-            raise ValueError
-        return self._timing_window_context
-
-    @property
-    def full_nps_by_rows(self):
-        prev = self.previous_rows
-        result = 0 if self.row.is_judge_non_important else 1
-        for row in prev:
-            result += 0 if row.row.is_judge_non_important else 1
-
-        return result
-
-    @property
-    def full_nps_by_keys(self):
-        prev = self.previous_rows
-
-        result = 0
-        if not self.row.is_judge_non_important:
-            result += self.row.replace_objects(JUDGE_IMPORTANT_SET,
-                                               NoteObject.TAP_OBJECT).row.count(NoteObject.TAP_OBJECT)
-        for row in prev:
-            if not row.row.is_judge_non_important:
-                result += self.row.replace_objects(JUDGE_IMPORTANT_SET,
-                                                   NoteObject.TAP_OBJECT).row.count(NoteObject.TAP_OBJECT)
-
-        return result
-
     @classmethod
     def from_row(cls, row):
         return cls(row, RowFlags.classify_row(row))
 
-    def evolve_previous_rows(self, previous_rows, timing_context):
-        return evolve(self, previous_rows=previous_rows, timing_window_context=timing_context)
-
 
 class AbstractNotefield(Generic[T], List[T]):
-    def get_row_sequence_of_n(self, order: int) -> 'SequentialNotefield[Tuple[T, ...]]':
-        """Get an n-row sequence.
-
-        This returns all sub-sequences from the note field where the sliding window is of size `order`
-        So for a note field [A, B, C, D, E] this is the row sequence of order 2: [(A, B), (B, C), (C, D), (D, E)]"""
-        return SequentialNotefield(
-            tuple(beta for beta in alpha)
-            for alpha in zip(
-                *(self[i:(-order + i) or None] for i in range(order))
-            )
-        ).attach_order(order)
-
-    @property
-    def row_sequence_2(self) -> 'SequentialNotefield[Tuple[T, T]]':
-        return cast(SequentialNotefield[Tuple[T, T]], self.get_row_sequence_of_n(2))
-
-    @property
-    def row_sequence_3(self) -> 'SequentialNotefield[Tuple[T, T, T]]':
-        return cast(SequentialNotefield[Tuple[T, T, T]], self.get_row_sequence_of_n(3))
-
     @property
     def alphabet_size(self) -> int:
-        return len({*self})
+        return len(self.unique_elements)
 
     @property
-    def hashed_flat(self) -> List[int]:
-        return [
+    def hashed_flat(self) -> 'AbstractNotefield[int]':
+        return AbstractNotefield(
             hash(obj)
             for obj in self
-        ]
+        )
 
     @property
     def unique_elements(self):
@@ -133,9 +73,8 @@ class PureNotefield(Generic[T], AbstractNotefield[Union[T, PureRow]], List[PureR
         active_holds = set()
         active_rolls = set()
 
+        is_pure = self.__class__ == PureNotefield
         for row in self:
-            active_holds |= row.row.find_object_lanes(NoteObject.HOLD_START)
-            active_rolls |= row.row.find_object_lanes(NoteObject.ROLL_START)
             active_holds -= row.row.find_object_lanes(NoteObject.HOLD_ROLL_END)
             active_rolls -= row.row.find_object_lanes(NoteObject.HOLD_ROLL_END)
 
@@ -146,14 +85,20 @@ class PureNotefield(Generic[T], AbstractNotefield[Union[T, PureRow]], List[PureR
                 for lane, obj in enumerate(row.row)
             ]
 
-            new_note_field.append(
-                evolve(row, row=PureRow(new_pure_row))
-            )
+            if is_pure:
+                new_note_field.append(PureRow(new_pure_row))
+            else:
+                new_note_field.append(
+                    evolve(cast(T, row), row=PureRow(new_pure_row))
+                )
+
+            active_holds |= row.row.find_object_lanes(NoteObject.HOLD_START)
+            active_rolls |= row.row.find_object_lanes(NoteObject.ROLL_START)
 
         return self.__class__(new_note_field)
 
     @property
-    def no_empty_rows(self) -> 'PureNotefield[T]':
+    def ignore_empty_rows(self) -> 'PureNotefield[T]':
         return self.__class__(
             row
             for row in self
@@ -163,14 +108,26 @@ class PureNotefield(Generic[T], AbstractNotefield[Union[T, PureRow]], List[PureR
     @property
     def no_decorative_elements(self) -> 'PureNotefield[T]':
         return self.__class__(
-            row.row.replace_objects({NoteObject.MINE, NoteObject.FAKE}, NoteObject.EMPTY_LANE)
+            row.row.replace_objects(DECORATIVE_SET, NoteObject.EMPTY_LANE)
             for row in self
         )
 
     @property
-    def unique_pure_rows(self) -> FrozenSet[PureRow]:
-        return frozenset(
-            row.row
+    def ignore_pure_hold_roll_body_rows(self) -> 'PureNotefield[T]':
+        return self.__class__(
+            row
+            for row in self
+            if not row.is_pure_hold_roll_body
+        )
+
+    @property
+    def normalized(self) -> 'PureNotefield[T]':
+        return self.hold_roll_bodies_distinct.no_decorative_elements.ignore_empty_rows.ignore_pure_hold_roll_body_rows
+
+    @property
+    def permutative_notefield(self) -> 'AbstractNotefield[FrozenSet[T]]':
+        return AbstractNotefield(
+            row.permutative_set
             for row in self
         )
 
@@ -233,16 +190,27 @@ class UntimedNotefield(Generic[T], PureNotefield[GlobalRow], List[GlobalRow]):
         )
 
     @property
-    def measures(self) -> Measure:
-        return Measure(max(row.pos.measure for row in self) + 1)
-
-    @property
     def no_decorative_elements(self) -> 'UntimedNotefield[T]':
         return self.__class__(
             evolve(row, row=row.row.replace_objects({NoteObject.MINE, NoteObject.FAKE},
                                                     NoteObject.EMPTY_LANE))
             for row in self
         )
+
+    def row_sequence_by_beats(self, beat_window=1) -> 'SequentialNotefield[RowSequence[T, ...]]':
+        def group(row):
+            return int(row.pos / Beat(beat_window).as_measure)
+
+        result = []
+        for _, group in groupby(self, group):
+            result.append(
+                RowSequence(
+                    obj.localize(Beat(beat_window).as_measure)
+                    for obj in group
+                )
+            )
+
+        return SequentialNotefield(result)
 
 
 class TimedNotefield(Generic[T], UntimedNotefield[GlobalTimedRow], List[GlobalTimedRow]):
@@ -254,10 +222,6 @@ class TimedNotefield(Generic[T], UntimedNotefield[GlobalTimedRow], List[GlobalTi
         )
 
     @property
-    def duration(self) -> Time:
-        return Time(max(row.time for row in self))
-
-    @property
     def discrete_time(self) -> 'TimedNotefield':
         return self.__class__(
             evolve(row, time=row.time.limited_precision)
@@ -265,45 +229,65 @@ class TimedNotefield(Generic[T], UntimedNotefield[GlobalTimedRow], List[GlobalTi
         )
 
     @property
+    def miniholds_minirolls_as_taps(self):
+        hold_regrab_window = Time(250, 1000)
+        roll_tap_window = Time(500, 1000)
+
+        hold_coords = []
+        roll_coords = []
+        for index, row in enumerate(self):
+            hold_starts = self[index].find_object_lanes(NoteObject.HOLD_START)
+            roll_starts = self[index].find_object_lanes(NoteObject.ROLL_START)
+
+            if hold_starts or roll_starts:
+                for sub_index, sub_row in enumerate(self[index:], start=index):
+                    ends = self[sub_index].find_object_lanes(NoteObject.HOLD_ROLL_END)
+                    ended_holds = hold_starts & ends
+                    ended_rolls = roll_starts & ends
+                    hold_coords.extend((range(index, sub_index + 1), lane) for lane in ended_holds)
+                    roll_coords.extend((range(index, sub_index + 1), lane) for lane in ended_rolls)
+                    hold_starts -= ended_holds
+                    roll_starts -= ended_rolls
+
+                    if not (hold_starts | roll_starts):
+                        break
+
+        hold_coords = [
+            pair
+            for pair in hold_coords
+            if self[pair[0].stop - 1].time - self[pair[0].start].time > hold_regrab_window
+        ]
+
+        roll_coords = [
+            pair
+            for pair in hold_coords
+            if self[pair[0].stop - 1].time - self[pair[0].start].time > roll_tap_window
+        ]
+
+        combined_coords = hold_coords + roll_coords
+
+        def new_object(obj, self_index, lane):
+            if obj not in LONG_NOTE_SET:
+                return obj
+
+            is_safe = any(self_index in long_note_range and lane == long_note_lane
+                          for long_note_range, long_note_lane in combined_coords)
+            if is_safe:
+                return obj
+            return obj == NoteObject.HOLD_START and NoteObject.TAP_OBJECT or NoteObject.EMPTY_LANE
+
+        return self.__class__(
+            evolve(row, row=PureRow(new_object(obj, index, lane)
+                                    for lane, obj in enumerate(row.row)))
+            for index, row in enumerate(self)
+        )
+
+    @property
     def delta_field(self) -> 'DeltaNotefield':
-        delta_rows = [a.evolve(b) for a, b in self.row_sequence_2]
+        delta_rows = [a.evolve(b) for a, b in zip(self[:-1:], self[1::])]
         delta_rows.append(self[-1].evolve(self[-1]))
 
         return DeltaNotefield(delta_rows)
-
-    def get_timing_window_rows(self: List[GlobalTimedRow], timing_window=Time(180, 1000)) -> 'MetaNotefield':
-        new_field = []
-
-        for index, row in enumerate(self):
-            this_time = row.time
-            result = MetaRow.from_row(row)
-            previous = []
-            index = index - 1
-            while index >= 0 and this_time - self[index].time < timing_window:
-                previous.append(self[index])
-                index -= 1
-            new_field.append(result.evolve_previous_rows(previous, timing_window))
-
-        return MetaNotefield(new_field)
-
-    def get_fuzzy_nps_sequence(self, timing_window=1000) -> Dict[Time, CheaperFraction]:
-        delta_step = Time(1, 1000)
-
-        source = self.discrete_time
-
-        result = {}
-        for row in source:
-            if row.is_judge_non_important:
-                continue
-
-            for delta_mul in range(-timing_window, timing_window + 1):
-                time_point = Time(row.time + delta_step * delta_mul)
-                result[time_point] = result.get(time_point, 0) + timing_window - abs(delta_mul)
-
-        return {
-            time_point: value / timing_window
-            for time_point, value in result.items()
-        }
 
 
 class DeltaNotefield(Generic[T], TimedNotefield[GlobalDeltaRow], List[GlobalDeltaRow]):
@@ -314,22 +298,68 @@ class DeltaNotefield(Generic[T], TimedNotefield[GlobalDeltaRow], List[GlobalDelt
             for obj in self
         )
 
+    @property
+    def pure_delta(self):
+        return self.position_invariant.time_invariant
 
-class SequentialNotefield(Generic[T], AbstractNotefield[T], List[T]):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._order = None
 
-    def attach_order(self, order):
-        result = SequentialNotefield(self)
-        result._order = order
+@lru_cache(10)
+def generate_permutative_maps(lanes=4):
+    return [
+        {
+            index: permutation[index]
+            for index in range(lanes)
+        }
+        for permutation in permutations(range(lanes))
+    ]
 
-        return result
+
+class RowSequence(Tuple[T, ...], tuple, Generic[T]):
+    __new__ = tuple.__new__
 
     @property
-    def sparse_sequence(self) -> 'SequentialNotefield[T]':
-        return SequentialNotefield(self[::self._order])
+    def permutative_group(self):
+        lanes = len(self[0].row)
+        maps = generate_permutative_maps(lanes)
+
+        return frozenset(make_ordered_set(
+            tuple(
+                obj.switch_lanes(lane_map)
+                for obj in self
+            )
+            for lane_map in maps
+        ))
+
+    @property
+    def is_empty_sequence(self):
+        return all(
+            row.is_empty
+            for row in self
+        )
+
+
+class SequentialNotefield(Generic[T], AbstractNotefield[RowSequence[T]], List[RowSequence[T]]):
+    def broadcast(self, function):
+        return self.__class__(
+            tuple(
+                function(obj)
+                for obj in seq
+            )
+            for seq in self
+        )
+
+    @property
+    def permutative_field(self):
+        return self.__class__(
+            seq.permutative_group
+            for seq in self
+        )
 
 
 class MetaNotefield(Generic[T], AbstractNotefield[MetaRow], List[MetaRow]):
+    pass
+
+
+# from simfile_parser import AugmentedChart
+class BatchOperations(object):
     pass

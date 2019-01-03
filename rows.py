@@ -5,7 +5,8 @@ from typing import Container, Optional, Union
 
 from attr import attrs, evolve
 
-from .basic_types import GlobalPosition, LocalPosition, Measure, NoteObject, Time
+from .basic_types import DeltaInvariant, GlobalPosition, LocalPosition, Measure, NoteObject, PositionInvariant, Time, \
+    TimeInvariant, make_ordered_set
 
 FULL_SET = {*NoteObject.__members__.values()}
 
@@ -23,13 +24,19 @@ NON_DECORATIVE_SET = FULL_SET - DECORATIVE_SET
 class HasRow(object):
     _row: Optional['PureRow'] = None
 
+    @staticmethod
+    def _typed_evolve(target, **kwargs):
+        if isinstance(target, PureRow):
+            return kwargs['row']
+        return evolve(target, **kwargs)
+
     @property
     def row(self):
         return self._row
 
     @property
     def row_invariant(self):
-        return evolve(self, row=None)
+        return self._typed_evolve(self, row=RowInvariant)
 
     @property
     def is_empty(self) -> bool:
@@ -44,21 +51,30 @@ class HasRow(object):
         return not {*self.row} - JUDGE_NON_IMPORTANT_SET
 
     @property
-    def mirror(self):
-        return evolve(self, row=self.row.mirror)
+    def is_pure_hold_roll_body(self):
+        return not {*self.row} - (EMPTY_LANE_SET | LONG_NOTE_BODY_SET)
 
     @property
-    @lru_cache(None)
+    def mirror(self):
+        return self._typed_evolve(self, row=self.row.mirror)
+
+    @property
     def permutative_group(self):
-        return [
-            evolve(self, row=PureRow(group))
+        return make_ordered_set(
+            self._typed_evolve(self, row=PureRow(group))
             for group in permutations(self.row)
-        ]
+        )
 
     @property
     @lru_cache(None)
     def permutative_set(self):
-        return set(self.permutative_group)
+        return frozenset(self.permutative_group)
+
+    def switch_lanes(self, lane_map):
+        return self._typed_evolve(self, row=PureRow(
+            self.row[lane_map.get(lane, lane)]
+            for lane, _ in enumerate(self.row)
+        ))
 
     def find_object_lanes(self, needle_object: NoteObject):
         return {
@@ -75,9 +91,7 @@ class HasRow(object):
             obj in from_note and to_note or obj
             for obj in self.row
         )
-        if isinstance(self, PureRow):
-            return new_row
-        return evolve(self, row=new_row)
+        return self._typed_evolve(self, row=new_row)
 
 
 @attrs(frozen=True, auto_attribs=True)
@@ -90,7 +104,7 @@ class HasTime(object):
 
     @property
     def time_invariant(self):
-        return evolve(self, time=None)
+        return evolve(self, time=TimeInvariant)
 
     @classmethod
     def from_two_rows(cls, from_: 'HasTime', to: 'HasTime'):
@@ -99,7 +113,7 @@ class HasTime(object):
 
 @attrs(frozen=True, auto_attribs=True)
 class HasPosition(object):
-    _pos: Optional[GlobalPosition] = None
+    _pos: Optional[Union[GlobalPosition, LocalPosition]] = None
 
     @property
     def snap(self):
@@ -115,7 +129,10 @@ class HasPosition(object):
 
     @property
     def position_invariant(self):
-        return evolve(self, pos=None)
+        return evolve(self, pos=PositionInvariant)
+
+    def localize(self, window_factor=1):
+        return evolve(self, pos=LocalPosition(self.pos % window_factor / window_factor))
 
 
 @attrs(frozen=True, auto_attribs=True)
@@ -128,7 +145,7 @@ class HasDelta(object):
 
     @property
     def delta_invariant(self):
-        return evolve(self, delta=None)
+        return evolve(self, delta=DeltaInvariant)
 
 
 class HasEvolution(object):
@@ -136,8 +153,9 @@ class HasEvolution(object):
         return NotImplemented
 
 
-class PureRow(HasRow, HasEvolution, tuple):
+class PureRow(tuple, HasRow, HasEvolution):
     """A basic class representing a row, equivalent to tuples with additional methods."""
+
     @classmethod
     def from_str_row(cls, row: str) -> 'PureRow':
         return PureRow(
@@ -170,6 +188,9 @@ class PureRow(HasRow, HasEvolution, tuple):
 
     def evolve(self, local_position: LocalPosition) -> 'LocalRow':
         return LocalRow(self, local_position)
+
+
+RowInvariant = PureRow([])
 
 
 @attrs(frozen=True, auto_attribs=True)
