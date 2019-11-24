@@ -201,14 +201,13 @@ class UntimedNotefield(Generic[T], PureNotefield[GlobalRow], List[GlobalRow]):
         def group(row):
             return int(row.pos / Beat(beat_window).as_measure)
 
-        result = []
-        for _, group in groupby(self, group):
-            result.append(
-                RowSequence(
-                    obj.localize(Beat(beat_window).as_measure)
-                    for obj in group
-                )
+        result = [
+            RowSequence(
+                obj.localize(Beat(beat_window).as_measure)
+                for obj in group
             )
+            for _, group in groupby(self, group)
+        ]
 
         return SequentialNotefield(result)
 
