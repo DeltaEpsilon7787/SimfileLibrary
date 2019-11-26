@@ -34,7 +34,7 @@ class MeasureMeasurePair(object):
     def from_string_list(cls, string_pairs: str):
         result = (
             map(operator.attrgetter('as_measure'), map(Beat, value.split('=')[:2]))
-            for beat, value in string_pairs
+            for value in string_pairs
         )
 
         return [
