@@ -50,6 +50,7 @@ meta:
 | "#FGCHANGES:" [phrase] -> meta_fgchanges
 | "#KEYSOUNDS:" [phrase] -> meta_keysounds
 | "#LYRICSPATH:" [phrase] -> meta_lyricspath
+| "#MENUCOLOR:" [phrase] -> meta_menucolor
 | "#SELECTABLE:" [phrase] -> meta_selectable
 | "#SUBTITLETRANSLIT:" [phrase] -> meta_subtitletranslit
 | "#TITLETRANSLIT:" [phrase] -> meta_titletranslit
