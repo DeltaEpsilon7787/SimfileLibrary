@@ -239,6 +239,7 @@ def parse(file: Union[str, TextIO]) -> Simfile:
     ]
 
     simfile = ''.join(simfile)
+    simfile = simfile.lstrip('\ufeff')
     try:
         chdir(path.dirname(file))
         parsed_chart = _SM_PARSER.parse(simfile)
